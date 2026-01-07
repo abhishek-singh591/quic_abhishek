@@ -165,6 +165,12 @@ class QEffDynamicLayer(DynamicLayer):
                 self.keys = CtxScatterFunc.apply(self.keys, position_ids, key_states)
                 self.values = CtxScatterFunc.apply(self.values, position_ids, value_states)
 
+    def get_seq_length(self, layer_idx: Optional[int] = 0) -> int:
+        """Returns the sequence length of the cached states. A layer index can be optionally passed."""
+        if self.keys is None or self.keys.numel() == 0:
+            return 0
+        return self.keys.shape[-1]
+
     def update(
         self,
         key_states: torch.Tensor,
@@ -203,13 +209,14 @@ class QEffDynamicLayer(DynamicLayer):
 
                 self.values = CtxScatterFuncCB.apply(self.values, batch_index, scatter_position_ids, value_states)
             else:
-                self.keys = CtxScatterFunc.apply(self.keys, position_ids, key_states)
-                self.values = CtxScatterFunc.apply(self.values, position_ids, value_states)
+                self.keys = CtxScatterFunc.apply(self.keys, position_ids, key_states, "keys")
+                # self.keys_ = CtxScatterFunc.apply(self.keys.transpose(2, 3).contiguous(), position_ids, key_states, "values")
+                self.values = CtxScatterFunc.apply(self.values, position_ids, value_states, "values")
 
             k_out, v_out = self.keys, self.values
 
             # Gather
-            ctx_len = cache_kwargs.get("CCL", k_out.shape[2])
+            ctx_len = cache_kwargs.get("CCL", k_out.shape[3])
             ctx_indices = torch.arange(ctx_len)[None, None, ...]
             gather_limit = position_ids.max(1, keepdim=True).values.unsqueeze(1)
             invalid_mask = ctx_indices > gather_limit
@@ -217,14 +224,26 @@ class QEffDynamicLayer(DynamicLayer):
             invalid_idx_value = InvalidIndexProvider._get_invalid_idx_value()
 
             ctx_indices = torch.where(invalid_mask, invalid_idx_value, ctx_indices)
-            if batch_index is not None:
-                k_out = CtxGatherFuncCB.apply(k_out, batch_index, ctx_indices, ctx_len)
-                v_out = CtxGatherFuncCB.apply(v_out, batch_index, ctx_indices, ctx_len)
-            else:
-                k_out = CtxGatherFunc.apply(k_out, ctx_indices, ctx_len)
-                v_out = CtxGatherFunc.apply(v_out, ctx_indices, ctx_len)
-            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
 
+            # if batch_index is not None:
+            #     k_out = CtxGatherFuncCB.apply(k_out, batch_index, ctx_indices, ctx_len)
+            #     v_out = CtxGatherFuncCB.apply(v_out, batch_index, ctx_indices, ctx_len)
+            # else:
+
+            B, H, D, T = self.keys.shape
+            cache_keys = []
+            for t in range(ctx_len):
+                if t > gather_limit.squeeze(2).squeeze(1):
+                    temp_keys = k_out[:, :, :, 0]
+                else:
+                    temp_keys = k_out[:, :, :, t]
+                cache_t = CtxGatherFunc.apply(temp_keys, t, ctx_len, "keys")
+                cache_keys.append(cache_t)
+
+            # k_out_ = CtxGatherFunc.apply(k_out.transpose(2, 3).contiguous(), ctx_indices, ctx_len, "values")
+            k_out = torch.stack(cache_keys, dim=-1)
+            v_out = CtxGatherFunc.apply(v_out, ctx_indices, ctx_len, "values")
+            v_out = torch.where(invalid_mask.unsqueeze(-1), torch.tensor(0.0, dtype=torch.float32), v_out)
         return k_out, v_out
 
     # TODO:This function will be depercated in future.

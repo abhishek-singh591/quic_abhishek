@@ -108,7 +108,7 @@ def eager_attention_forward(
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
 
-    attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
+    attn_weights = torch.matmul(query, key_states) * scaling
     if attention_mask is not None:
         attn_weights = torch.where(
             attention_mask, torch.tensor(MIN_MASKED_ATTENTION_VALUE, dtype=torch.float32), attn_weights
@@ -225,7 +225,6 @@ class QEffLlamaAttention(LlamaAttention):
         query_states = self.q_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
         key_states = self.k_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
         value_states = self.v_proj(hidden_states, **kwargs).view(hidden_shape).transpose(1, 2)
-
         kv_seq_len = past_key_value.get_seq_length(self.layer_idx, cache_position)
         past_seen_tokens = past_key_value.get_seq_length() if past_key_value is not None else 0
         cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
@@ -244,6 +243,7 @@ class QEffLlamaAttention(LlamaAttention):
                 if comp_ctx_lengths is not None:
                     attention_mask = attention_mask[:, :, :, : comp_ctx_lengths.shape[-1]]
                     cache_kwargs["CCL"] = attention_mask.shape[-1]
+                # import pdb; pdb.set_trace()
                 key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         if num_kv_blocks is not None:
@@ -349,6 +349,7 @@ class QEffLlamaModel(LlamaModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
+            past_key_values = [(k.transpose(-1, -2), v) for (k, v) in past_key_values]
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
         if cache_position is None:
@@ -363,7 +364,6 @@ class QEffLlamaModel(LlamaModel):
 
         # embed positions
         hidden_states = inputs_embeds
-
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
 
