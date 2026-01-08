@@ -17,16 +17,16 @@ import torch
 from onnx import ModelProto, TensorProto, external_data_helper, numpy_helper
 
 from QEfficient.customop.ctx_scatter_gather import (
-    CtxGather,
     CtxGather3D,
     CtxGatherBlockedKV,
-    CtxGatherFunc,
     CtxGatherFunc3D,
     CtxGatherFuncBlockedKV,
-    CtxScatter,
+    CtxGatherFuncKey,
+    CtxGatherKey,
     CtxScatter3D,
-    CtxScatterFunc,
     CtxScatterFunc3D,
+    CtxScatterFuncKey,
+    CtxScatterValue,
 )
 from QEfficient.customop.ctx_scatter_gather_cb import (
     CtxGatherBlockedKVCB,
@@ -91,9 +91,9 @@ class CustomOpTransform(BaseOnnxTransform):
 
     _custom_ops: Dict[str, Tuple[Any, Any]] = {
         "CustomRMSNormFunc": (CustomRMSNormFunc, CustomRMSNorm),
-        "CtxScatterFunc": (CtxScatterFunc, CtxScatter),
+        "CtxScatterFunc": (CtxScatterFuncKey, CtxGatherKey),
         "CtxScatterFunc3D": (CtxScatterFunc3D, CtxScatter3D),
-        "CtxGatherFunc": (CtxGatherFunc, CtxGather),
+        "CtxGatherFunc": (CtxGatherFuncKey, CtxScatterValue),
         "CtxGatherFunc3D": (CtxGatherFunc3D, CtxGather3D),
         "CtxScatterFuncCB3D": (CtxScatterFuncCB3D, CtxScatterCB3D),
         "CtxGatherFuncCB3D": (CtxGatherFuncCB3D, CtxGatherCB3D),
