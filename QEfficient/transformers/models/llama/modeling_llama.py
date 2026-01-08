@@ -349,7 +349,6 @@ class QEffLlamaModel(LlamaModel):
         return_legacy_cache = False
         if use_cache and not isinstance(past_key_values, Cache):
             return_legacy_cache = True
-            past_key_values = [(k.transpose(-1, -2), v) for (k, v) in past_key_values]
             past_key_values = QEffDynamicCache.from_legacy_cache(past_key_values)
 
         if cache_position is None:

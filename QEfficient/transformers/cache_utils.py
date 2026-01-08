@@ -206,7 +206,6 @@ class QEffDynamicLayer(DynamicLayer):
                 scatter_position_ids = torch.where(position_ids < 0, invalid_scatter_index, position_ids)
 
                 self.keys = CtxScatterFuncCB.apply(self.keys, batch_index, scatter_position_ids, key_states)
-
                 self.values = CtxScatterFuncCB.apply(self.values, batch_index, scatter_position_ids, value_states)
             else:
                 self.keys = CtxScatterFunc.apply(self.keys, position_ids, key_states, "keys")
@@ -230,7 +229,6 @@ class QEffDynamicLayer(DynamicLayer):
             #     v_out = CtxGatherFuncCB.apply(v_out, batch_index, ctx_indices, ctx_len)
             # else:
 
-            B, H, D, T = self.keys.shape
             cache_keys = []
             for t in range(ctx_len):
                 if t > gather_limit.squeeze(2).squeeze(1):

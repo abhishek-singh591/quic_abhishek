@@ -2619,6 +2619,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
             "position_ids": torch.arange(seq_len, dtype=torch.int64).view(1, seq_len).repeat(bs, 1),
             "past_key_values": [[] for _ in range(self.num_layers)],
         }
+
         dynamic_axes = {
             "input_ids": {0: "batch_size", 1: "seq_len"},
             "position_ids": {0: "batch_size", 1: "seq_len"},
@@ -2630,13 +2631,19 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if len(kv_cache_shape) == 3:  # For GPTBigCode arch the pkv is 3d
             pkv_dynamic_axes = {
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
-                1: "ctx_len",
+                2: "ctx_len",
             }
         else:  # pkv is 4d
-            pkv_dynamic_axes = {
+            pkv_dynamic_axes_key = {
+                0: "full_batch_size" if self.continuous_batching else "batch_size",
+                3: "ctx_len",
+            }
+
+            pkv_dynamic_axes_value = {
                 0: "full_batch_size" if self.continuous_batching else "batch_size",
                 2: "ctx_len",
             }
+
         output_names = []
         if self.model.qaic_config is not None and self.model.qaic_config.get("include_sampler", False):
             if self.model.qaic_config.get("return_pdfs", False):
@@ -2661,25 +2668,48 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
 
         else:
             # HACK: create common function for this including above if condition code
-            pkv_dynamic_axes = (
+            pkv_dynamic_axes_key = (
                 self.model.get_pkv_dynamic_axes(
                     retain_full_kv=kwargs.get("retain_full_kv", False)
                     or (prefill_only and kwargs.get("enable_chunking", False)),
                     continuous_batching=self.continuous_batching,
-                )
+                )[0]
                 if hasattr(self.model, "get_pkv_dynamic_axes")
-                else pkv_dynamic_axes
+                else pkv_dynamic_axes_key
             )
-            pkv_dynamic_axes = (
-                [pkv_dynamic_axes] * self.model.config.num_hidden_layers
-                if isinstance(pkv_dynamic_axes, dict)
-                else pkv_dynamic_axes
+
+            pkv_dynamic_axes_value = (
+                self.model.get_pkv_dynamic_axes(
+                    retain_full_kv=kwargs.get("retain_full_kv", False)
+                    or (prefill_only and kwargs.get("enable_chunking", False)),
+                    continuous_batching=self.continuous_batching,
+                )[1]
+                if hasattr(self.model, "get_pkv_dynamic_axes")
+                else pkv_dynamic_axes_value
+            )
+
+            pkv_dynamic_axes_key = (
+                [pkv_dynamic_axes_key] * self.model.config.num_hidden_layers
+                if isinstance(pkv_dynamic_axes_key, dict)
+                else pkv_dynamic_axes_key
+            )
+
+            pkv_dynamic_axes_value = (
+                [pkv_dynamic_axes_value] * self.model.config.num_hidden_layers
+                if isinstance(pkv_dynamic_axes_value, dict)
+                else pkv_dynamic_axes_value
             )
 
             for i in range(self.num_layers):
                 for kv in ["key", "value"]:
-                    example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
-                    dynamic_axes[f"past_{kv}.{i}"] = pkv_dynamic_axes[i]
+                    if kv == "key":
+                        # Can come up with some better way: Here changing the shape for keys from [bs, num_heads, seq_len, head_dim] to [bs, num_heads, head_dim, seq_len].
+                        example_inputs["past_key_values"][i].append(
+                            torch.zeros(kv_cache_shape[:2] + kv_cache_shape[2:][::-1], dtype=torch.float32)
+                        )
+                    else:
+                        example_inputs["past_key_values"][i].append(torch.zeros(kv_cache_shape, dtype=torch.float32))
+                    dynamic_axes[f"past_{kv}.{i}"] = f"pkv_dynamic_axes_{kv}{[i]}"
                     output_names.append(f"past_{kv}.{i}_RetainedState")
 
         if self.continuous_batching:
@@ -2942,6 +2972,7 @@ class QEFFAutoModelForCausalLM(QEFFBaseModel):
         if prefill_only is None or not prefill_only:
             if self.continuous_batching and full_batch_size is None:
                 raise TypeError("`full_batch_size` is required when `continuous_batching=True`.")
+
         else:
             if self.continuous_batching and kv_cache_batch_size is None and full_batch_size is None:
                 raise ValueError(

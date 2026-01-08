@@ -14,78 +14,79 @@ ops = getattr(onnxscript, "opset" + str(constants.ONNX_EXPORT_OPSET))
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
-def CtxScatter(
+def CtxScatterKey(
     data: onnxscript.FLOAT,
     position_ids: onnxscript.INT32,
     updates: onnxscript.FLOAT,
     is_keys: onnxscript.BOOL,  # True → keys, False → values
 ) -> onnxscript.FLOAT:
-    # ---------------- VALUES BRANCH ----------------
-    def values_branch():
-        batch_size = ops.Gather(ops.Shape(data), [0])
-        num_heads = ops.Gather(ops.Shape(data), [1])
-        seq_len = ops.Gather(ops.Shape(position_ids), [1])
+    shape = ops.Shape(data)
+    batch_size = ops.Gather(shape, [0])
+    num_heads = ops.Gather(shape, [1])
+    head_dim = ops.Gather(shape, [2])
+    seq_len = ops.Gather(ops.Shape(position_ids), [1])
 
-        zero = ops.Constant(value_ints=[0])
-        one = ops.Constant(value_ints=[1])
+    zero = ops.Constant(value_ints=[0])
+    one = ops.Constant(value_ints=[1])
 
-        exp_shape = ops.Concat(batch_size, num_heads, seq_len, one, axis=0)
+    exp_shape = ops.Concat(batch_size, num_heads, head_dim, seq_len, axis=0)
 
-        batch_idx = ops.Expand(
-            ops.Unsqueeze(ops.Range(zero, batch_size, one), [1, 2, 3]),
-            exp_shape,
-        )
-        head_idx = ops.Expand(
-            ops.Unsqueeze(ops.Range(zero, num_heads, one), [0, 2, 3]),
-            exp_shape,
-        )
-        ctx_idx = ops.Expand(
-            ops.Unsqueeze(position_ids, [1, 3]),
-            exp_shape,
-        )
+    batch_idx = ops.Expand(
+        ops.Unsqueeze(ops.Range(zero, batch_size, one), [1, 2, 3]),
+        exp_shape,
+    )
+    head_idx = ops.Expand(
+        ops.Unsqueeze(ops.Range(zero, num_heads, one), [0, 2, 3]),
+        exp_shape,
+    )
+    d_idx = ops.Expand(
+        ops.Unsqueeze(ops.Range(zero, head_dim, one), [0, 1, 3]),
+        exp_shape,
+    )
+    ctx_idx = ops.Expand(
+        ops.Unsqueeze(position_ids, [1, 2]),
+        exp_shape,
+    )
 
-        indices = ops.Concat(batch_idx, head_idx, ctx_idx, axis=3)
-        return ops.ScatterND(data, indices, updates)
+    indices = ops.Concat(batch_idx, head_idx, d_idx, ctx_idx, axis=3)
 
-    # ---------------- KEYS BRANCH ----------------
-    def keys_branch():
-        shape = ops.Shape(data)
-        batch_size = ops.Gather(shape, [0])
-        num_heads = ops.Gather(shape, [1])
-        head_dim = ops.Gather(shape, [2])
-        seq_len = ops.Gather(ops.Shape(position_ids), [1])
+    # Torch: updates.transpose(2, 3)
+    updates_t = ops.Transpose(updates, perm=[0, 1, 3, 2])
 
-        zero = ops.Constant(value_ints=[0])
-        one = ops.Constant(value_ints=[1])
+    return ops.ScatterND(data, indices, updates_t)
 
-        exp_shape = ops.Concat(batch_size, num_heads, head_dim, seq_len, axis=0)
 
-        batch_idx = ops.Expand(
-            ops.Unsqueeze(ops.Range(zero, batch_size, one), [1, 2, 3]),
-            exp_shape,
-        )
-        head_idx = ops.Expand(
-            ops.Unsqueeze(ops.Range(zero, num_heads, one), [0, 2, 3]),
-            exp_shape,
-        )
-        d_idx = ops.Expand(
-            ops.Unsqueeze(ops.Range(zero, head_dim, one), [0, 1, 3]),
-            exp_shape,
-        )
-        ctx_idx = ops.Expand(
-            ops.Unsqueeze(position_ids, [1, 2]),
-            exp_shape,
-        )
+@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+def CtxScatterValue(
+    data: onnxscript.FLOAT,
+    position_ids: onnxscript.INT32,
+    updates: onnxscript.FLOAT,
+    is_keys: onnxscript.BOOL,  # True → keys, False → values
+) -> onnxscript.FLOAT:
+    batch_size = ops.Gather(ops.Shape(data), [0])
+    num_heads = ops.Gather(ops.Shape(data), [1])
+    seq_len = ops.Gather(ops.Shape(position_ids), [1])
 
-        indices = ops.Concat(batch_idx, head_idx, d_idx, ctx_idx, axis=3)
+    zero = ops.Constant(value_ints=[0])
+    one = ops.Constant(value_ints=[1])
 
-        # Torch: updates.transpose(2, 3)
-        updates_t = ops.Transpose(updates, perm=[0, 1, 3, 2])
+    exp_shape = ops.Concat(batch_size, num_heads, seq_len, one, axis=0)
 
-        return ops.ScatterND(data, indices, updates_t)
+    batch_idx = ops.Expand(
+        ops.Unsqueeze(ops.Range(zero, batch_size, one), [1, 2, 3]),
+        exp_shape,
+    )
+    head_idx = ops.Expand(
+        ops.Unsqueeze(ops.Range(zero, num_heads, one), [0, 2, 3]),
+        exp_shape,
+    )
+    ctx_idx = ops.Expand(
+        ops.Unsqueeze(position_ids, [1, 3]),
+        exp_shape,
+    )
 
-    # ---------------- IF ----------------
-    return ops.If(is_keys, keys_branch, values_branch)
+    indices = ops.Concat(batch_idx, head_idx, ctx_idx, axis=3)
+    return ops.ScatterND(data, indices, updates)
 
 
 class CtxScatterFunc(torch.autograd.Function):
@@ -121,19 +122,15 @@ class CtxScatterFunc(torch.autograd.Function):
         updates: torch.Value,
         identifier: str,
     ) -> torch.Value:
-        # Build a BOOL tensor constant: True for "keys", False for "values"
-        is_keys_const = g.op(
-            "Constant",
-            value_t=torch.tensor(identifier == "keys", dtype=torch.bool),
-        )
-
-        return g.onnxscript_op(
-            CtxScatter,
-            data,
-            position_ids,
-            updates,
-            is_keys_const,
-        ).setTypeAs(data)
+        if identifier == "keys":
+            return g.onnxscript_op(
+                CtxScatterKey,
+                data,
+                position_ids,
+                updates,
+            ).setTypeAs(data)
+        else:
+            return g.onnxscript_op(CtxScatterValue, data, position_ids, updates).setTypeAs(data)
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
@@ -195,40 +192,36 @@ class CtxGatherFunc3D(torch.autograd.Function):
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
-def CtxGather(
+def CtxGatherKey(
     data: onnxscript.FLOAT,
     ctx_indices: onnxscript.INT32,
     comp_ctx_len: onnxscript.INT64,  # <-- Use INT64 for shape
-    is_keys: onnxscript.BOOL,
 ) -> onnxscript.FLOAT:
-    # -------- values branch --------
-    def values_branch():
-        # Create a shape tensor based on comp_ctx_len
-        shape_tensor = ops.Concat(ops.Shape(data)[:2], ops.Reshape(comp_ctx_len, [1]), axis=0)
+    shape_tensor = ops.Shape(data)[:3]
 
-        # Directly use the shape tensor without validation
-        ctx_indices = ops.Expand(ctx_indices, shape_tensor)
-        ctx_indices = ops.Unsqueeze(ctx_indices, [-1])
-        return ops.GatherND(data, ctx_indices, batch_dims=2)
+    # Build index grids
+    b_idx = ops.Expand(ops.Reshape(ops.Range(0, ops.Gather(shape_tensor, 0), 1), [-1, 1, 1]), shape_tensor)
+    h_idx = ops.Expand(ops.Reshape(ops.Range(0, ops.Gather(shape_tensor, 1), 1), [1, -1, 1]), shape_tensor)
+    s_idx = ops.Expand(ops.Reshape(ops.Range(0, ops.Gather(shape_tensor, 2), 1), [1, 1, -1]), shape_tensor)
 
-    # -------- keys branch --------
-    def keys_branch():
-        shape_tensor = ops.Shape(data)[:3]
+    # Combine indices
+    indices = ops.Concat(ops.Unsqueeze(b_idx, [-1]), ops.Unsqueeze(h_idx, [-1]), ops.Unsqueeze(s_idx, [-1]), axis=-1)
+    return ops.GatherND(data, indices, batch_dims=0)
 
-        # Build index grids
-        b_idx = ops.Expand(ops.Reshape(ops.Range(0, ops.Gather(shape_tensor, 0), 1), [-1, 1, 1]), shape_tensor)
-        h_idx = ops.Expand(ops.Reshape(ops.Range(0, ops.Gather(shape_tensor, 1), 1), [1, -1, 1]), shape_tensor)
-        s_idx = ops.Expand(ops.Reshape(ops.Range(0, ops.Gather(shape_tensor, 2), 1), [1, 1, -1]), shape_tensor)
 
-        # Combine indices
-        indices = ops.Concat(
-            ops.Unsqueeze(b_idx, [-1]), ops.Unsqueeze(h_idx, [-1]), ops.Unsqueeze(s_idx, [-1]), axis=-1
-        )
+@onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
+def CtxGatherValue(
+    data: onnxscript.FLOAT,
+    ctx_indices: onnxscript.INT32,
+    comp_ctx_len: onnxscript.INT64,
+) -> onnxscript.FLOAT:
+    # Create a shape tensor based on comp_ctx_len
+    shape_tensor = ops.Concat(ops.Shape(data)[:2], ops.Reshape(comp_ctx_len, [1]), axis=0)
 
-        return ops.GatherND(data, indices, batch_dims=0)
-
-    # -------- ONNX If --------
-    return ops.If(is_keys, values_branch, keys_branch)
+    # Directly use the shape tensor without validation
+    ctx_indices = ops.Expand(ctx_indices, shape_tensor)
+    ctx_indices = ops.Unsqueeze(ctx_indices, [-1])
+    return ops.GatherND(data, ctx_indices, batch_dims=2)
 
 
 class CtxGatherFunc(torch.autograd.Function):
@@ -259,24 +252,21 @@ class CtxGatherFunc(torch.autograd.Function):
         g: torch.Graph,
         data: torch.Value,
         ctx_indices: torch.Value,
-        comp_ctx_len,  # may be Python int OR torch._C.Value
+        comp_ctx_len,
         identifier: str,
     ) -> torch.Value:
         if not isinstance(ctx_indices, torch.Value):
             ctx_indices = g.op("Constant", value_t=torch.tensor(ctx_indices, dtype=torch.int64))
 
-        is_keys_const = g.op(
-            "Constant",
-            value_t=torch.tensor(identifier == "values", dtype=torch.bool),
-        )
-
-        return g.onnxscript_op(
-            CtxGather,
-            data,
-            ctx_indices,
-            comp_ctx_len,
-            is_keys_const,
-        ).setTypeAs(data)
+        if identifier == "keys":
+            return g.onnxscript_op(
+                CtxGatherKey,
+                data,
+                ctx_indices,
+                comp_ctx_len,
+            ).setTypeAs(data)
+        else:
+            return g.onnxscript_op(CtxGatherValue, data, ctx_indices, comp_ctx_len).setTypeAs(data)
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
