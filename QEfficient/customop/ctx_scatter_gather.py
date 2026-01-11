@@ -18,30 +18,28 @@ def CtxScatterKey(
     data: onnxscript.FLOAT,
     position_ids: onnxscript.INT32,
     updates: onnxscript.FLOAT,
-    is_keys: onnxscript.BOOL,
 ) -> onnxscript.FLOAT:
-    pass
-    # batch_size = ops.Gather(ops.Shape(data), [0])
-    # num_heads = ops.Gather(ops.Shape(data), [1])
-    # head_dim = ops.Gather(ops.Shape(data), [2])
-    # seq_len = ops.Gather(ops.Shape(position_ids), [1])
+    # pass
+    batch_size = ops.Gather(ops.Shape(data), [0])
+    num_heads = ops.Gather(ops.Shape(data), [1])
+    head_dim = ops.Gather(ops.Shape(data), [2])
+    seq_len = ops.Gather(ops.Shape(position_ids), [1])
 
-    # zero = ops.Constant(value_ints=[0])
-    # one = ops.Constant(value_ints=[1])
+    zero = ops.Constant(value_ints=[0])
+    one = ops.Constant(value_ints=[1])
 
-    # exp_shape = ops.Concat(batch_size, num_heads, head_dim, seq_len, axis=0)
+    exp_shape = ops.Concat(batch_size, num_heads, head_dim, seq_len, one, axis=0)
 
-    # batch_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, batch_size, one), [1, 2, 3]), exp_shape)
-    # head_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, num_heads, one), [0, 2, 3]), exp_shape)
-    # d_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, head_dim, one), [0, 1, 3]), exp_shape)
-    # ctx_idx = ops.Expand(ops.Unsqueeze(position_ids, [1, 2]), exp_shape)
+    batch_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, batch_size, one), [1, 2, 3, 4]), exp_shape)
+    head_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, num_heads, one), [0, 2, 3, 4]), exp_shape)
+    d_idx = ops.Expand(ops.Unsqueeze(ops.Range(zero, head_dim, one), [0, 1, 3, 4]), exp_shape)
+    ctx_idx = ops.Expand(ops.Unsqueeze(position_ids, [1, 2, -1]), exp_shape)
 
-    # # indices = ops.Concat(batch_idx, head_idx, d_idx, ctx_idx, axis=3)
+    indices = ops.Concat(batch_idx, head_idx, d_idx, ctx_idx, axis=4)
 
-    # # Torch: updates.transpose(2, 3)
-    # updates_t = ops.Transpose(updates, perm=[0, 1, 3, 2])
+    updates_t = ops.Transpose(updates, perm=[0, 1, 3, 2])
 
-    # return ops.ScatterND(data, indices, updates_t)
+    return ops.ScatterND(data, indices, updates_t)
 
 
 @onnxscript.script(onnxscript.values.Opset("com.qualcomm.cloud", 1))
@@ -49,7 +47,6 @@ def CtxScatterValue(
     data: onnxscript.FLOAT,
     position_ids: onnxscript.INT32,
     updates: onnxscript.FLOAT,
-    is_keys: onnxscript.BOOL,  # True → keys, False → values
 ) -> onnxscript.FLOAT:
     # Find dims
     batch_size = ops.Gather(ops.Shape(data), [0])
@@ -195,9 +192,10 @@ def CtxGatherValue(
     # Create a shape tensor based on comp_ctx_len
     shape_tensor = ops.Concat(ops.Shape(data)[:2], ops.Reshape(comp_ctx_len, [1]), axis=0)
     # Directly use the shape tensor without validation
-    ctx_indices = ops.Expand(ctx_indices, shape_tensor)
-    ctx_indices = ops.Unsqueeze(ctx_indices, [-1])
-    return ops.GatherND(data, ctx_indices, batch_dims=2)
+    ctx_indices_ = ctx_indices
+    ctx_indices_ = ops.Expand(ctx_indices_, shape_tensor)
+    ctx_indices_ = ops.Unsqueeze(ctx_indices_, [-1])
+    return ops.GatherND(data, ctx_indices_, batch_dims=2)
 
 
 class CtxGatherFuncKey(torch.autograd.Function):
