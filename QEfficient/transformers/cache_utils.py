@@ -210,7 +210,7 @@ class QEffDynamicLayer(DynamicLayer):
                 self.keys = CtxScatterFuncCB.apply(self.keys, batch_index, scatter_position_ids, key_states)
                 self.values = CtxScatterFuncCB.apply(self.values, batch_index, scatter_position_ids, value_states)
             else:
-                self.keys = CtxScatterFuncKey.apply(self.keys, position_ids, key_states.transpose(2, 3).contiguous())
+                self.keys = CtxScatterFuncKey.apply(self.keys, position_ids, key_states)
                 # self.keys_ = CtxScatterFunc.apply(self.keys.transpose(2, 3).contiguous(), position_ids, key_states, "values")
                 self.values = CtxScatterFuncValue.apply(self.values, position_ids, value_states)
 
