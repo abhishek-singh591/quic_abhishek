@@ -192,10 +192,9 @@ def CtxGatherValue(
     # Create a shape tensor based on comp_ctx_len
     shape_tensor = ops.Concat(ops.Shape(data)[:2], ops.Reshape(comp_ctx_len, [1]), axis=0)
     # Directly use the shape tensor without validation
-    ctx_indices_ = ctx_indices
-    ctx_indices_ = ops.Expand(ctx_indices_, shape_tensor)
-    ctx_indices_ = ops.Unsqueeze(ctx_indices_, [-1])
-    return ops.GatherND(data, ctx_indices_, batch_dims=2)
+    ctx_indices = ops.Expand(ctx_indices, shape_tensor)
+    ctx_indices = ops.Unsqueeze(ctx_indices, [-1])
+    return ops.GatherND(data, ctx_indices, batch_dims=2)
 
 
 class CtxGatherFuncKey(torch.autograd.Function):
