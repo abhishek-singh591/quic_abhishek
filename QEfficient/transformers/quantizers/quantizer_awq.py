@@ -10,10 +10,11 @@ from transformers.quantizers.quantizer_awq import AwqQuantizer
 from transformers.utils.quantization_config import AwqConfig
 
 try:
-    # transformers>=5
-    from transformers.utils.quantization_config import AwqBackend
-except ImportError:  # transformers<5
-    from transformers.utils.quantization_config import AwqBackendPackingMethod as AwqBackend
+    from transformers.utils.quantization_config import AwqBackendPackingMethod, AWQLinearVersion
+except ImportError:
+    from transformers.utils.quantization_config import AwqBackend as AwqBackendPackingMethod
+    from transformers.utils.quantization_config import AwqFormat as AWQLinearVersion
+
 
 from QEfficient.transformers.quantizers.awq import WQLinear_GEMM
 from QEfficient.transformers.quantizers.quantizer_utils import (
@@ -31,17 +32,25 @@ class QEffAwqConfig(AwqConfig):
         """
         super().post_init()
 
-        # Keep QEff limited to auto-awq style GEMM path while tolerating v5 enum renames.
-        allowed_backends = {getattr(AwqBackend, "AUTOAWQ", None), getattr(AwqBackend, "AUTO", None)}
-        if self.backend not in allowed_backends:
+        autoawq_backend = getattr(AwqBackendPackingMethod, "AUTOAWQ", None)
+        if autoawq_backend is None:
+            autoawq_backend = getattr(AwqBackendPackingMethod, "LEGACY_AWQ")
+
+        if self.backend not in [autoawq_backend]:
             raise ValueError(
-                f"Only quantization backend AUTO/AUTOAWQ is supported - not recognized backend {self.backend}"
+                f"Only quantization backend {autoawq_backend} is supported - not recognized backend {self.backend}"
             )
 
-        awq_format = getattr(self, "format", None)
-        allowed_formats = {None, "gemm", getattr(type(awq_format), "GEMM", None)}
-        if awq_format not in allowed_formats:
-            raise ValueError(f"Only GEMM format is supported - not recognized format {awq_format}")
+        if isinstance(self.version, str):
+            if hasattr(AWQLinearVersion, "from_str"):
+                self.version = AWQLinearVersion.from_str(self.version)
+            else:
+                self.version = AWQLinearVersion(self.version)
+
+        if self.version not in [AWQLinearVersion.GEMM]:
+            raise ValueError(
+                f"Only {AWQLinearVersion.GEMM} version in supported - not recognized version {self.version}"
+            )
 
         do_fuse = getattr(self, "do_fuse", False)
         fuse_max_seq_len = getattr(self, "fuse_max_seq_len", None)
