@@ -1159,12 +1159,15 @@ def blocked_q_attention_forward_prefill(
         if position_bias is not None:
             attn_weights = attn_weights + position_bias
 
-        causal_mask = _create_causal_mask(
-            position_ids=position_ids_block,
-            target_length=key_states.shape[2],
-            sliding_window=sliding_window,
-            start_index=0,
-        )
+        if attention_mask is None:
+            causal_mask = _create_causal_mask(
+                position_ids=position_ids_block,
+                target_length=key_states.shape[2],
+                sliding_window=sliding_window,
+                start_index=0,
+            )
+        else:
+            causal_mask = attention_mask[:, :, q_start : q_start + q_len_block, : key_states.shape[2]]
         masked_tensor = torch.full_like(attn_weights, MIN_MASKED_ATTENTION_VALUE, dtype=mask_dtype, device=query.device)
         attn_weights = torch.where(causal_mask, masked_tensor, attn_weights)
 

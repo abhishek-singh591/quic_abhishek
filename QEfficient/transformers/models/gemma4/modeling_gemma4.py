@@ -1160,7 +1160,7 @@ class QEffGemma4ForCausalLM(Gemma4ForCausalLM):
             else:
                 hidden_states = hidden_states[:, -1:, :]
 
-        logits = self.model.lm_head(hidden_states)
+        logits = self.lm_head(hidden_states)
         if self.config.final_logit_softcapping is not None:
             logits = logits / self.config.final_logit_softcapping
             logits = torch.tanh(logits)
