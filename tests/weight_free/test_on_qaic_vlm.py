@@ -778,7 +778,7 @@ def test_vlm_offline_prefill_hf_qaic_parity(model_type, blocking_key, weight_fre
             model_type,
             checkpoint_dir,
             model_id,
-            force_full_attention=model_type in {"gemma4", "qwen3_5_moe"},
+            force_full_attention=model_type == "gemma4",
         )
     except Exception as exc:
         skip_on_model_fetch_error(exc, model_id)
