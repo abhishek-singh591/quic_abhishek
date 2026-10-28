@@ -58,7 +58,8 @@ def update_running_softmax(
     attn_weights_block: torch.Tensor,
     current_denominator: torch.Tensor,
     output: torch.Tensor,
-    v_block: torch.Tensor,
+    v_block: Optional[torch.Tensor],
+    *,
     attention_mask: Optional[torch.Tensor] = None,
     skip_kv: bool = False,
     skip_future: Optional[torch.Tensor] = None,
@@ -333,12 +334,18 @@ def blocked_kv_attention_forward(
             attn_weights_block = torch.where(mask_block, masked_tensor, attn_weights_block)
 
         current_max, current_denominator, output = update_running_softmax(
-            current_max, attn_weights_block, current_denominator, output, v_block_states, skip_kv, skip_future
+            current_max,
+            attn_weights_block,
+            current_denominator,
+            output,
+            v_block_states,
+            skip_kv=skip_kv,
+            skip_future=skip_future,
         )
 
     # If present, apply Attention Sinks, needed for GPT-OSS
     if sinks is not None:
-        _, _, output = update_running_softmax(current_max, sinks, current_denominator, output, None)
+        _, _, output = update_running_softmax(current_max, sinks, current_denominator, output, v_block=None)
 
     attn_output = output.transpose(1, 2).contiguous()
     attn_weights = None
@@ -1388,15 +1395,15 @@ def blocked_qkv_attention_forward(
                 current_denominator,
                 output_blocks,
                 v_block_states,
-                skip_kv,
-                skip_future,
+                skip_kv=skip_kv,
+                skip_future=skip_future,
             )
 
         # If present, apply Attention Sinks, needed for GPT-OSS
         if sinks is not None:
             sinks_block = sinks[:, :, q_start : q_start + q_len_block, :]
             _, _, output_blocks = update_running_softmax(
-                current_max, sinks_block, current_denominator, output_blocks, None
+                current_max, sinks_block, current_denominator, output_blocks, v_block=None
             )
         q_output_blocks.append(output_blocks)
         q_attn_blocks.append(attn_weights_block)
@@ -1574,13 +1581,19 @@ def blocked_hqkv_attention_forward(
                     attn_weights_block = torch.where(mask_block_g, masked_tensor, attn_weights_block)
 
                 current_max, current_denominator, output_blocks = update_running_softmax(
-                    current_max, attn_weights_block, current_denominator, output_blocks, v_g, skip_kv, skip_future
+                    current_max,
+                    attn_weights_block,
+                    current_denominator,
+                    output_blocks,
+                    v_g,
+                    skip_kv=skip_kv,
+                    skip_future=skip_future,
                 )
             # If present, apply Attention Sinks, needed for GPT-OSS
             if sinks is not None:
                 sinks_block = sinks[:, h_start:h_end, q_start : q_start + q_len_block, :]
                 _, _, output_blocks = update_running_softmax(
-                    current_max, sinks_block, current_denominator, output_blocks, None
+                    current_max, sinks_block, current_denominator, output_blocks, v_block=None
                 )
             q_output_blocks.append(output_blocks)
             q_attn_blocks.append(attn_weights_block)
@@ -1786,7 +1799,13 @@ def blocked_bhqkv_attention_forward(
                         attn_weights_block = torch.where(mask_block_g, masked_tensor, attn_weights_block)
 
                     current_max, current_denominator, output_blocks = update_running_softmax(
-                        current_max, attn_weights_block, current_denominator, output_blocks, v_g, skip_kv, skip_future
+                        current_max,
+                        attn_weights_block,
+                        current_denominator,
+                        output_blocks,
+                        v_g,
+                        skip_kv=skip_kv,
+                        skip_future=skip_future,
                     )
                 # If present, apply Attention Sinks, needed for GPT-OSS
                 if sinks is not None:
@@ -1797,7 +1816,7 @@ def blocked_bhqkv_attention_forward(
                         :,
                     ]
                     _, _, output_blocks = update_running_softmax(
-                        current_max, sinks_block, current_denominator, output_blocks, None
+                        current_max, sinks_block, current_denominator, output_blocks, v_block=None
                     )
                 batch_output_blocks.append(output_blocks)
                 batch_attn_blocks.append(attn_weights_block)
@@ -2069,8 +2088,8 @@ def blocked_kv_mla_attention_forward(
                 current_denominator,
                 output,
                 compressed_kv_block,
-                skip_kv,
-                skip_future,
+                skip_kv=skip_kv,
+                skip_future=skip_future,
             )  # [1, 64, q_len, kv_block_size] X [1, 1, kv_block_size, 512] -> [1, 64, q_len, 512]
         else:
             knope = torch.matmul(compressed_kv_block, per_head_k_up_normal)
@@ -2092,8 +2111,8 @@ def blocked_kv_mla_attention_forward(
                 current_denominator,
                 output,
                 compressed_kv_block,
-                skip_kv,
-                skip_future,
+                skip_kv=skip_kv,
+                skip_future=skip_future,
             )
 
     attn_output = torch.matmul(output, per_head_v_up)

@@ -323,12 +323,34 @@ def _update_retained_states(target_inputs, source_outputs, layer_types, target_s
             else (f"conv_state.{layer_idx}", f"recurrent_state.{layer_idx}")
         )
         for state_name in state_names:
-            retained_name = f"{state_name}_RetainedState"
-            if retained_name in source_outputs:
-                value = np.array(source_outputs[retained_name], copy=True)
-                if target_session is not None:
-                    value = _fit_retained_state_to_input(target_session, state_name, value)
-                target_inputs[state_name] = value
+            source_name = next(
+                (
+                    f"{candidate}_RetainedState"
+                    for candidate in (state_name, f"{state_name}_vllmKvCache")
+                    if f"{candidate}_RetainedState" in source_outputs
+                ),
+                None,
+            )
+            if source_name is None:
+                continue
+
+            target_name = state_name
+            if target_session is not None:
+                target_name = next(
+                    (
+                        candidate
+                        for candidate in (state_name, f"{state_name}_vllmKvCache")
+                        if candidate in target_session.input_names
+                    ),
+                    None,
+                )
+                if target_name is None:
+                    continue
+
+            value = np.array(source_outputs[source_name], copy=True)
+            if target_session is not None:
+                value = _fit_retained_state_to_input(target_session, target_name, value)
+            target_inputs[target_name] = value
 
 
 def _language_layer_types(qeff_model) -> list[str]:
@@ -490,7 +512,7 @@ def _run_vlm_three_qpc(qeff_model, qeff_inputs, qpc_paths, layer_types, generati
                 ):
                     chunk_inputs[name] = _slice_prefill_chunk(value, start, end, padded_len)
             prefill_outputs = prefill_session.run(chunk_inputs)
-            _update_retained_states(chunk_inputs, prefill_outputs, layer_types)
+            _update_retained_states(chunk_inputs, prefill_outputs, layer_types, target_session=prefill_session)
             if "image_idx_output" in prefill_outputs:
                 chunk_inputs["image_idx"] = prefill_outputs["image_idx_output"]
 
