@@ -636,6 +636,7 @@ def test_weight_free_gemma4_decode_dummy_trace_length(tmp_export_dir):
         kv_offload=True,
         prefill_seq_len=1,
         batch_size=constants.ONNX_EXPORT_EXAMPLE_BATCH_SIZE,
+        ctx_len=model_config["ctx_len"],
     )
     assert dummy_inputs["lang"]["input_ids"].shape[1] == constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN
     assert dummy_inputs["lang"]["past_key_values"][0][0].shape[2] == constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN

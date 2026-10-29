@@ -3500,6 +3500,46 @@ def test_qwen3_vl_moe_dummy_inputs_use_weight_free_batch_size(weight_free, expec
     assert inputs["lang"]["deepstack_features"].shape[1] == expected_batch_size
 
 
+def test_gemma4_dummy_inputs_preserve_effective_sequence_length_for_kv_cache():
+    from QEfficient.utils import constants
+    from QEfficient.transformers.models.gemma4.modeling_gemma4 import QEffGemma4ForConditionalGeneration
+
+    model = QEffGemma4ForConditionalGeneration.__new__(QEffGemma4ForConditionalGeneration)
+    text_config = SimpleNamespace(
+        layer_types=["full_attention"],
+        num_key_value_heads=2,
+        head_dim=4,
+        hidden_size=8,
+        dtype=torch.float32,
+    )
+    model.config = SimpleNamespace(
+        dtype=torch.float32,
+        image_token_id=1,
+        vision_config=SimpleNamespace(patch_size=2),
+    )
+    model.model = SimpleNamespace(language_model=SimpleNamespace(config=text_config))
+    model._get_vision_max_patches = MagicMock(return_value=36)
+    model._get_mm_tokens_per_image = MagicMock(return_value=4)
+
+    prefill_inputs = model.get_dummy_inputs(
+        kv_offload=True,
+        batch_size=1,
+        prefill_seq_len=3,
+        ctx_len=8,
+    )["lang"]
+    decode_inputs = model.get_dummy_inputs(
+        kv_offload=True,
+        batch_size=1,
+        prefill_seq_len=1,
+        ctx_len=8,
+    )["lang"]
+
+    assert prefill_inputs["input_ids"].shape == (1, 3)
+    assert prefill_inputs["past_key_values"][0][0].shape == (1, 2, 3, 4)
+    assert decode_inputs["input_ids"].shape == (1, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN)
+    assert decode_inputs["past_key_values"][0][0].shape == (1, 2, constants.ONNX_EXPORT_EXAMPLE_SEQ_LEN, 4)
+
+
 def test_qwen3_5_moe_get_specializations_strips_vision_symbols_for_comp_ctx_variants():
     from types import SimpleNamespace
 
